@@ -2,6 +2,7 @@ from fastapi import FastAPI, HTTPException
 import yfinance as yf
 import pandas as pd
 import numpy as np
+import time
 from cachetools import cached, TTLCache # <-- NOVO IMPORT
 
 app = FastAPI(title="API de Ativos - Dashboard")
@@ -57,11 +58,19 @@ def home():
 cache_resumo = TTLCache(maxsize=1, ttl=900)
 
 @cached(cache_resumo)
+@cached(cache_resumo)
 def gerar_resumo_pesado():
-    lista_resumo = []
+    # 2. VERIFICAÇÃO CRÍTICA: Esta variável DEVE estar aqui dentro da função!
+    # Se ela estiver de fora, os dados vão se duplicar infinitamente.
+    lista_resumo = [] 
+    
     for ticker in ATIVOS_PADRAO:
         df_d = _processar_historico_diario(ticker)
         df_h = _processar_historico_horario(ticker)
+        
+        # 3. O RESPIRO: Faz o Python esperar 0.2 segundos. 
+        # Isso impede o Yahoo Finance de "engasgar" e te devolver o ativo repetido.
+        time.sleep(0.2) 
         
         if df_d is None or df_h is None:
             continue
