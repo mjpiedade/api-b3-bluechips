@@ -3,12 +3,18 @@ import yfinance as yf
 import pandas as pd
 import numpy as np
 import time
+import requests # <-- NOVO IMPORT
 from cachetools import cached, TTLCache # <-- NOVO IMPORT
 
 app = FastAPI(title="API de Ativos - Dashboard")
 
 ATIVOS_PADRAO = ['BOVA11.SA', 'PETR4.SA', 'VALE3.SA', 'BBAS3.SA', 'BPAC11.SA', 'ITUB4.SA', 'BBDC4.SA', 'WEGE3.SA', 'AMER3.SA']
 
+# --- NOVO: O DISFARCE DE NAVEGADOR ---
+sessao_falsa = requests.Session()
+sessao_falsa.headers.update({
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
+})
 
 # --- Funções Auxiliares de Cálculo (Mantidas do seu código original) ---
 def _aplicar_calculos(dados: pd.DataFrame, p_sma_20=20, p_std_20=20, p_sma_50=50, p_std_50=50, p_sma_200=200, p_std_200=200, p_vol_200=200) -> pd.DataFrame:
@@ -22,7 +28,8 @@ def _aplicar_calculos(dados: pd.DataFrame, p_sma_20=20, p_std_20=20, p_sma_50=50
     return dados
 
 def _processar_historico_diario(ticker):
-    dados = yf.download(ticker, period='2y', progress=False, auto_adjust=True)
+    # ADICIONE O session=sessao_falsa NO FINAL DESTA LINHA:
+    dados = yf.download(ticker, period='2y', progress=False, auto_adjust=True, session=sessao_falsa)
     if isinstance(dados.columns, pd.MultiIndex): dados.columns = dados.columns.get_level_values(0)
     dados = dados.loc[:,~dados.columns.duplicated()]
     if dados.index.tz is not None:
@@ -32,7 +39,9 @@ def _processar_historico_diario(ticker):
     return None
 
 def _processar_historico_horario(ticker):
-    dados = yf.download(ticker, period='10d', interval='5m', progress=False, auto_adjust=True)
+    # ADICIONE O session=sessao_falsa NO FINAL DESTA LINHA:
+    dados = yf.download(ticker, period='10d', interval='5m', progress=False, auto_adjust=True, session=sessao_falsa)
+
     if isinstance(dados.columns, pd.MultiIndex): dados.columns = dados.columns.get_level_values(0)
     dados = dados.loc[:,~dados.columns.duplicated()]
     if dados.index.tz is not None:
@@ -57,7 +66,6 @@ def home():
 # Assim o celular carrega em 0.5 segundos em vez de 15 segundos!
 cache_resumo = TTLCache(maxsize=1, ttl=900)
 
-@cached(cache_resumo)
 @cached(cache_resumo)
 def gerar_resumo_pesado():
     # 2. VERIFICAÇÃO CRÍTICA: Esta variável DEVE estar aqui dentro da função!
