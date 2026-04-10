@@ -1,14 +1,18 @@
 from fastapi import FastAPI, HTTPException
-import yfinance as yf
 import pandas as pd
 import numpy as np
 import time
-import requests # <-- NOVO IMPORT
-from cachetools import cached, TTLCache # <-- NOVO IMPORT
+import requests
+from cachetools import cached, TTLCache
+
+# REMOVA a linha "import yfinance as yf"
 
 app = FastAPI(title="API de Ativos - Dashboard")
 
 ATIVOS_PADRAO = ['BOVA11.SA', 'PETR4.SA', 'VALE3.SA', 'BBAS3.SA', 'BPAC11.SA', 'ITUB4.SA', 'BBDC4.SA', 'WEGE3.SA', 'AMER3.SA']
+
+# COLE O SEU TOKEN AQUI:
+TOKEN_BRAPI = "fqhKn7HBDVUqrwbwzXXbep"
 
 # --- NOVO: O DISFARCE DE NAVEGADOR ---
 sessao_falsa = requests.Session()
@@ -28,31 +32,66 @@ def _aplicar_calculos(dados: pd.DataFrame, p_sma_20=20, p_std_20=20, p_sma_50=50
     return dados
 
 def _processar_historico_diario(ticker):
-    # ADICIONE O session=sessao_falsa NO FINAL DESTA LINHA:
-    dados = yf.download(ticker, period='2y', progress=False, auto_adjust=True, session=sessao_falsa)
-    if isinstance(dados.columns, pd.MultiIndex): dados.columns = dados.columns.get_level_values(0)
-    dados = dados.loc[:,~dados.columns.duplicated()]
-    if dados.index.tz is not None:
-        dados.index = dados.index.tz_convert('America/Sao_Paulo').tz_localize(None)
-    if not dados.empty and len(dados) >= 2:
-        return _aplicar_calculos(dados)
+    # A BRAPI prefere os tickers brasileiros sem o ".SA"
+    ticker_limpo = ticker.replace('.SA', '') 
+    
+    # Busca 2 anos de dados com intervalo diário
+    url = f"https://brapi.dev/api/quote/{ticker_limpo}?range=2y&interval=1d&token={TOKEN_BRAPI}"
+    
+    try:
+        response = requests.get(url, timeout=15)
+        if response.status_code == 200:
+            dados = response.json()
+            if 'results' in dados and 'historicalDataPrice' in dados['results'][0]:
+                historico = dados['results'][0]['historicalDataPrice']
+                if not historico: return None
+                
+                df = pd.DataFrame(historico)
+                
+                # Padroniza as colunas para o mesmo formato do antigo yfinance
+                df.rename(columns={'date': 'Date', 'open': 'Open', 'high': 'High', 'low': 'Low', 'close': 'Close', 'volume': 'Volume'}, inplace=True)
+                
+                # Converte o timestamp Unix para data e define como índice
+                df['Date'] = pd.to_datetime(df['Date'], unit='s')
+                df.set_index('Date', inplace=True)
+                
+                if len(df) >= 2:
+                    return _aplicar_calculos(df)
+    except Exception as e:
+        print(f"Erro ao buscar diário de {ticker}: {e}")
+        
     return None
 
 def _processar_historico_horario(ticker):
-    # ADICIONE O session=sessao_falsa NO FINAL DESTA LINHA:
-    dados = yf.download(ticker, period='10d', interval='5m', progress=False, auto_adjust=True, session=sessao_falsa)
-
-    if isinstance(dados.columns, pd.MultiIndex): dados.columns = dados.columns.get_level_values(0)
-    dados = dados.loc[:,~dados.columns.duplicated()]
-    if dados.index.tz is not None:
-        dados.index = dados.index.tz_convert('America/Sao_Paulo').tz_localize(None)
+    ticker_limpo = ticker.replace('.SA', '') 
     
-    if not dados.empty and len(dados) >= 2:
-        dados = dados.resample('1h', offset='20min').agg({
-            'Open': 'first', 'High': 'max', 'Low': 'min', 'Close': 'last', 'Volume': 'sum'
-        })
-        dados = dados.dropna(subset=['Close'])
-        return _aplicar_calculos(dados)
+    # Busca 1 mês de dados com intervalo de 1 hora
+    url = f"https://brapi.dev/api/quote/{ticker_limpo}?range=1mo&interval=1h&token={TOKEN_BRAPI}"
+    
+    try:
+        response = requests.get(url, timeout=15)
+        if response.status_code == 200:
+            dados = response.json()
+            if 'results' in dados and 'historicalDataPrice' in dados['results'][0]:
+                historico = dados['results'][0]['historicalDataPrice']
+                if not historico: return None
+                
+                df = pd.DataFrame(historico)
+                df.rename(columns={'date': 'Date', 'open': 'Open', 'high': 'High', 'low': 'Low', 'close': 'Close', 'volume': 'Volume'}, inplace=True)
+                df['Date'] = pd.to_datetime(df['Date'], unit='s')
+                
+                # Ajusta o fuso horário para São Paulo, garantindo que o App mostre a hora certa
+                df['Date'] = df['Date'].dt.tz_localize('UTC').dt.tz_convert('America/Sao_Paulo').dt.tz_localize(None)
+                df.set_index('Date', inplace=True)
+                
+                # Remove linhas vazias (comuns em APIs quando não há negociação)
+                df = df.dropna(subset=['Close'])
+                
+                if len(df) >= 2:
+                    return _aplicar_calculos(df)
+    except Exception as e:
+        print(f"Erro ao buscar horário de {ticker}: {e}")
+        
     return None
 
 # --- ROTAS DA API ---
