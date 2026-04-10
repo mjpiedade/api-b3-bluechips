@@ -3,5 +3,4 @@ uvicorn
 yfinance
 pandas
 numpy
-time
 cachetools
