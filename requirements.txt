@@ -3,5 +3,5 @@ uvicorn
 yfinance
 pandas
 numpy
-cachetools
 time
+cachetools
